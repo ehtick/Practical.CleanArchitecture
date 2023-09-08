@@ -2,6 +2,7 @@
 using ClassifiedAds.BackgroundServer.ConfigurationOptions;
 using ClassifiedAds.BackgroundServer.HostedServices;
 using ClassifiedAds.BackgroundServer.Identity;
+using ClassifiedAds.BackgroundServer.MessageBusConsumers;
 using ClassifiedAds.CrossCuttingConcerns.Exceptions;
 using ClassifiedAds.Domain.Identity;
 using ClassifiedAds.Domain.IdentityProviders;
@@ -12,6 +13,7 @@ using ClassifiedAds.Infrastructure.Logging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Reflection;
 
 namespace ClassifiedAds.BackgroundServer;
 
@@ -60,6 +62,7 @@ public class Program
             services.AddMessageBusSender<FileDeletedEvent>(appSettings.MessageBroker);
             services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.MessageBroker);
             services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.MessageBroker);
+            services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
 
             services.AddNotificationServices(appSettings.Notification);
 
@@ -75,7 +78,8 @@ public class Program
                 services.AddSingleton<IAzureActiveDirectoryB2CIdentityProvider>(new AzureActiveDirectoryB2CIdentityProvider(appSettings.IdentityProviders.AzureActiveDirectoryB2C));
             }
 
-            services.AddHostedService<MessageBusReceiver>();
+            services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileUploadedEvent>>();
+            services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileDeletedEvent>>();
             services.AddHostedService<PublishEventWorker>();
             services.AddHostedService<SendEmailWorker>();
             services.AddHostedService<SendSmsWorker>();

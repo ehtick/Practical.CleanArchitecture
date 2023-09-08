@@ -11,6 +11,9 @@ public interface IMessageBus
 
     Task ReceiveAsync<TConsumer, T>(Func<T, MetaData, Task> action, CancellationToken cancellationToken = default)
         where T : IMessageBusMessage;
+
+    Task ReceiveAsync<TConsumer, T>(CancellationToken cancellationToken = default)
+        where T : IMessageBusMessage;
 }
 
 public interface IMessageBusMessage
