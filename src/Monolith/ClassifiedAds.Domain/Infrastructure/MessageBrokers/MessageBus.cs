@@ -1,6 +1,8 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using ClassifiedAds.Domain.Entities;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -12,6 +14,7 @@ public class MessageBus : IMessageBus
 {
     private readonly IServiceProvider _serviceProvider;
     private static List<Type> _consumers = new List<Type>();
+    private static Dictionary<string, List<Type>> _outboxEventHandlers = new ();
 
     internal static void AddConsumers(Assembly assembly, IServiceCollection services)
     {
@@ -25,6 +28,33 @@ public class MessageBus : IMessageBus
         }
 
         _consumers.AddRange(types);
+    }
+
+    internal static void AddOutboxEventHandlers(Assembly assembly, IServiceCollection services)
+    {
+        var types = assembly.GetTypes()
+                            .Where(x => x.GetInterfaces().Any(y => y == typeof(IOutBoxEventHandler)))
+                            .ToList();
+
+        foreach (var type in types)
+        {
+            services.AddTransient(type);
+        }
+
+        foreach (var item in types)
+        {
+            var canHandlerEventTypes = (string[])item.InvokeMember(nameof(IOutBoxEventHandler.CanHandleEventTypes), BindingFlags.InvokeMethod, null, null, null, CultureInfo.CurrentCulture);
+
+            foreach (var eventType in canHandlerEventTypes)
+            {
+                if (!_outboxEventHandlers.ContainsKey(eventType))
+                {
+                    _outboxEventHandlers[eventType] = new List<Type>();
+                }
+
+                _outboxEventHandlers[eventType].Add(item);
+            }
+        }
     }
 
     public MessageBus(IServiceProvider serviceProvider)
@@ -65,6 +95,23 @@ public class MessageBus : IMessageBus
             }
         }, cancellationToken);
     }
+
+    public async Task SendAsync(OutboxEvent message, CancellationToken cancellationToken = default)
+    {
+        var handlerTypes = _outboxEventHandlers.ContainsKey(message.EventType) ? _outboxEventHandlers[message.EventType] : null;
+
+        if (handlerTypes == null)
+        {
+            // TODO: Take Note
+            return;
+        }
+
+        foreach (var type in handlerTypes)
+        {
+            dynamic handler = _serviceProvider.GetService(type);
+            await handler.HandleAsync(message, cancellationToken);
+        }
+    }
 }
 
 public static class MessageBusExtentions
@@ -72,5 +119,17 @@ public static class MessageBusExtentions
     public static void AddMessageBusConsumers(this IServiceCollection services, Assembly assembly)
     {
         MessageBus.AddConsumers(assembly, services);
+    }
+
+    public static void AddOutboxEventHandlers(this IServiceCollection services, Assembly assembly)
+    {
+        MessageBus.AddOutboxEventHandlers(assembly, services);
+    }
+
+    public static void AddMessageBus(this IServiceCollection services, Assembly assembly)
+    {
+        services.AddTransient<IMessageBus, MessageBus>();
+        services.AddMessageBusConsumers(assembly);
+        services.AddOutboxEventHandlers(assembly);
     }
 }

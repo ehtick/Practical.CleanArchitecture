@@ -15,75 +15,67 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Reflection;
 
-namespace ClassifiedAds.BackgroundServer;
-
-public class Program
+Host.CreateDefaultBuilder(args)
+.UseWindowsService()
+.UseClassifiedAdsLogger(configuration =>
 {
-    public static void Main(string[] args)
+    var appSettings = new AppSettings();
+    configuration.Bind(appSettings);
+    return appSettings.Logging;
+})
+.ConfigureServices((hostContext, services) =>
+{
+    var serviceProvider = services.BuildServiceProvider();
+    var configuration = serviceProvider.GetService<IConfiguration>();
+
+    var appSettings = new AppSettings();
+    configuration.Bind(appSettings);
+
+    var validationResult = appSettings.Validate();
+    if (validationResult.Failed)
     {
-        CreateHostBuilder(args).Build().Run();
+        throw new ValidationException(validationResult.FailureMessage);
     }
 
-    public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
-        .UseWindowsService()
-        .UseClassifiedAdsLogger(configuration =>
-        {
-            var appSettings = new AppSettings();
-            configuration.Bind(appSettings);
-            return appSettings.Logging;
-        })
-        .ConfigureServices((hostContext, services) =>
-        {
-            var serviceProvider = services.BuildServiceProvider();
-            var configuration = serviceProvider.GetService<IConfiguration>();
+    services.Configure<AppSettings>(configuration);
 
-            var appSettings = new AppSettings();
-            configuration.Bind(appSettings);
+    services.AddScoped<ICurrentUser, CurrentUser>();
 
-            var validationResult = appSettings.Validate();
-            if (validationResult.Failed)
-            {
-                throw new ValidationException(validationResult.FailureMessage);
-            }
+    services.AddDateTimeProvider();
+    services.AddPersistence(appSettings.ConnectionStrings.ClassifiedAds)
+            .AddDomainServices()
+            .AddApplicationServices()
+            .AddMessageHandlers();
 
-            services.Configure<AppSettings>(configuration);
+    services.AddTransient<IMessageBus, MessageBus>();
+    services.AddMessageBusSender<FileUploadedEvent>(appSettings.MessageBroker);
+    services.AddMessageBusSender<FileDeletedEvent>(appSettings.MessageBroker);
+    services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.MessageBroker);
+    services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.MessageBroker);
+    services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
+    services.AddOutboxEventHandlers(Assembly.GetExecutingAssembly());
 
-            services.AddScoped<ICurrentUser, CurrentUser>();
+    services.AddNotificationServices(appSettings.Notification);
 
-            services.AddDateTimeProvider();
-            services.AddPersistence(appSettings.ConnectionStrings.ClassifiedAds)
-                    .AddDomainServices()
-                    .AddApplicationServices()
-                    .AddMessageHandlers();
+    services.AddWebNotification<SendTaskStatusMessage>(appSettings.Notification.Web);
 
-            services.AddTransient<IMessageBus, MessageBus>();
-            services.AddMessageBusSender<FileUploadedEvent>(appSettings.MessageBroker);
-            services.AddMessageBusSender<FileDeletedEvent>(appSettings.MessageBroker);
-            services.AddMessageBusReceiver<WebhookConsumer, FileUploadedEvent>(appSettings.MessageBroker);
-            services.AddMessageBusReceiver<WebhookConsumer, FileDeletedEvent>(appSettings.MessageBroker);
-            services.AddMessageBusConsumers(Assembly.GetExecutingAssembly());
+    if (appSettings.IdentityProviders?.Auth0?.Enabled ?? false)
+    {
+        services.AddSingleton<IAuth0IdentityProvider>(new Auth0IdentityProvider(appSettings.IdentityProviders.Auth0));
+    }
 
-            services.AddNotificationServices(appSettings.Notification);
+    if (appSettings.IdentityProviders?.AzureActiveDirectoryB2C?.Enabled ?? false)
+    {
+        services.AddSingleton<IAzureActiveDirectoryB2CIdentityProvider>(new AzureActiveDirectoryB2CIdentityProvider(appSettings.IdentityProviders.AzureActiveDirectoryB2C));
+    }
 
-            services.AddWebNotification<SendTaskStatusMessage>(appSettings.Notification.Web);
-
-            if (appSettings.IdentityProviders?.Auth0?.Enabled ?? false)
-            {
-                services.AddSingleton<IAuth0IdentityProvider>(new Auth0IdentityProvider(appSettings.IdentityProviders.Auth0));
-            }
-
-            if (appSettings.IdentityProviders?.AzureActiveDirectoryB2C?.Enabled ?? false)
-            {
-                services.AddSingleton<IAzureActiveDirectoryB2CIdentityProvider>(new AzureActiveDirectoryB2CIdentityProvider(appSettings.IdentityProviders.AzureActiveDirectoryB2C));
-            }
-
-            services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileUploadedEvent>>();
-            services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileDeletedEvent>>();
-            services.AddHostedService<PublishEventWorker>();
-            services.AddHostedService<SendEmailWorker>();
-            services.AddHostedService<SendSmsWorker>();
-            services.AddHostedService<ScheduleCronJobWorker>();
-            services.AddHostedService<SyncUsersWorker>();
-        });
-}
+    services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileUploadedEvent>>();
+    services.AddHostedService<MessageBusConsumerBackgroundService<WebhookConsumer, FileDeletedEvent>>();
+    services.AddHostedService<PublishEventWorker>();
+    services.AddHostedService<SendEmailWorker>();
+    services.AddHostedService<SendSmsWorker>();
+    services.AddHostedService<ScheduleCronJobWorker>();
+    services.AddHostedService<SyncUsersWorker>();
+})
+.Build()
+.Run();

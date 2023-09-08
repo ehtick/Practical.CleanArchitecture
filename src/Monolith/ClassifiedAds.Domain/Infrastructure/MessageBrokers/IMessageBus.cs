@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ClassifiedAds.Domain.Entities;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,6 +15,8 @@ public interface IMessageBus
 
     Task ReceiveAsync<TConsumer, T>(CancellationToken cancellationToken = default)
         where T : IMessageBusMessage;
+
+    Task SendAsync(OutboxEvent message, CancellationToken cancellationToken = default);
 }
 
 public interface IMessageBusMessage
